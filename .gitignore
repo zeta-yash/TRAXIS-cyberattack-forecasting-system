@@ -12,3 +12,4 @@ notes.txt
 /datadata/
 *.csv
 .venv/
+/data

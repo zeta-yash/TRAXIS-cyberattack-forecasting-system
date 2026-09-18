@@ -17,7 +17,7 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 # =====================================================================
 def make_dev_slice(input_path: str = RAW_INPUT_PATH, output_path: str = "data/dev_sample_30k.csv", n_samples: int = 30000):
     print("Generating Pipeline Dev Slice...")
-    # Read in chunks to keep RAM footprint negligible on 16GB Mac
+    # Read in chunks to keep RAM footprint negligible 
     chunk_size = 50000
     chunks = []
     
@@ -60,7 +60,7 @@ def make_benchmark_slice(input_path: str, output_path: str = "data/benchmark_ddo
 
 # =====================================================================
 # 3. Full Cleaned Dataset (Downcasted Memory Footprint)
-# Purpose: Production/final runs without crashing 16GB unified memory
+# Purpose: Production/final runs without crashing memory
 # =====================================================================
 def make_optimized_full_dataset(input_path: str, output_path: str = "data/full_optimized.csv"):
     print("Optimizing Full Dataset (Downcasting float64/int64)...")
