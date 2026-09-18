@@ -9,7 +9,6 @@ __pycache__/
 
 #mynotes
 notes.txt
-prepare_dataset.py
 /datadata/
 *.csv
 .venv/
