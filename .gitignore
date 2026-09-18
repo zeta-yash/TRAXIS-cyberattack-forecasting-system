@@ -1,0 +1,15 @@
+# Vitual environments & uv cache
+.venv/
+uv.lock
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+#mynotes
+notes.txt
+prepare_dataset.py
+/datadata/
+*.csv
+.venv/
