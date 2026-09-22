@@ -60,7 +60,6 @@ def make_benchmark_slice(input_path: str, output_path: str = "data/benchmark_ddo
 
 # =====================================================================
 # 3. Full Cleaned Dataset (Downcasted Memory Footprint)
-# Purpose: Production/final runs without crashing memory
 # =====================================================================
 def make_optimized_full_dataset(input_path: str, output_path: str = "data/full_optimized.csv"):
     print("Optimizing Full Dataset (Downcasting float64/int64)...")
@@ -84,9 +83,14 @@ def make_optimized_full_dataset(input_path: str, output_path: str = "data/full_o
         
     print(f"Saved Optimized Full Dataset -> {output_path}")
 
+
+# we have to create a parquet reader -> CSV converter for initial phase
+# later we will be using telemetry packets
+
 if __name__ == "__main__":
-    make_dev_slice(RAW_INPUT_PATH)
+    # make_dev_slice(RAW_INPUT_PATH)
     #to create testing level file
     # make_benchmark_slice(RAW_INPUT_PATH) 
     # Uncomment only when you are ready to prepare the entire dataset
     # make_optimized_full_dataset(RAW_INPUT_PATH)
+
