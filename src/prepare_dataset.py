@@ -4,7 +4,7 @@ import sys
 import pandas as pd
 import numpy as np
 
-RAW_INPUT_PATH = os.path.join("data", "02-14-2018.csv") #for testing purpose onlyy..
+RAW_INPUT_PATH = os.path.join("data", "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv") #for testing purpose onlyy..
 
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Strips leading/trailing whitespace from column names."""
@@ -15,7 +15,7 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 # 1. Pipeline Dev Slice (20,000 - 50,000 rows, Stratified)
 # Purpose: Instant loading (<2 sec), testing PyG tensors & node mappings
 # =====================================================================
-def make_dev_slice(input_path: str = RAW_INPUT_PATH, output_path: str = "data/dev_sample_30k.csv", n_samples: int = 30000):
+def make_dev_slice(input_path: str = RAW_INPUT_PATH, output_path: str = "data/samples/dev_sample_30k.csv", n_samples: int = 30000):
     print("Generating Pipeline Dev Slice...")
     # Read in chunks to keep RAM footprint negligible 
     chunk_size = 50000
@@ -43,7 +43,7 @@ def make_dev_slice(input_path: str = RAW_INPUT_PATH, output_path: str = "data/de
 # 2. Single-Attack Benchmark Slice (100,000 - 300,000 rows, Temporal)
 # Purpose: Realistic continuous traffic sequence for GNN + Temporal baseline
 # =====================================================================
-def make_benchmark_slice(input_path: str, output_path: str = "data/benchmark_ddos_150k.csv", n_rows: int = 150000):
+def make_benchmark_slice(input_path: str, output_path: str = "data/samples/benchmark_ddos_150k.csv", n_rows: int = 150000):
     print("Generating Single-Attack Benchmark Slice...")
     
     # Read the top n continuous rows directly
@@ -61,7 +61,7 @@ def make_benchmark_slice(input_path: str, output_path: str = "data/benchmark_ddo
 # =====================================================================
 # 3. Full Cleaned Dataset (Downcasted Memory Footprint)
 # =====================================================================
-def make_optimized_full_dataset(input_path: str, output_path: str = "data/full_optimized.csv"):
+def make_optimized_full_dataset(input_path: str, output_path: str = "data/samples/full_optimized.csv"):
     print("Optimizing Full Dataset (Downcasting float64/int64)...")
     
     first_chunk = True
@@ -88,7 +88,7 @@ def make_optimized_full_dataset(input_path: str, output_path: str = "data/full_o
 # later we will be using telemetry packets
 
 if __name__ == "__main__":
-    # make_dev_slice(RAW_INPUT_PATH)
+    make_dev_slice(RAW_INPUT_PATH)
     #to create testing level file
     # make_benchmark_slice(RAW_INPUT_PATH) 
     # Uncomment only when you are ready to prepare the entire dataset
