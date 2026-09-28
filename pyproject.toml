@@ -1,17 +1,23 @@
 [project]
 name = "anafs"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-based Network Attack Forecasting System"
 readme = "README.md"
 authors = [
     { name = "zeta-yash", email = "somgupta070703@gmail.com" }
 ]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "torch",
+    "torch-geometric",
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "networkx",
+    "matplotlib",
+    "streamlit",
+    "pyvis"
+]
 
-[project.scripts]
-anafs = "anafs:main"
-
-[build-system]
-requires = ["uv_build>=0.12.8,<0.13.0"]
-build-backend = "uv_build"
+[tool.uv]
+package = false
