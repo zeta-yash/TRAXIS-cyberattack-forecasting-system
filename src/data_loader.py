@@ -1,185 +1,149 @@
-# uses telemetry - but for now we are using sample file
-
-# and create csv
-
 import os
-import sys
-import pandas as pd
-import numpy as np
+import glob
 import torch
+import numpy as np
+import pandas as pd
+from pathlib import Path
 from torch_geometric.data import Data
-from sklearn.preprocessing import StandardScaler
 
-RAW_INPUT_PATH = os.path.join("data", "original_samples", "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv")
-
-def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Strips leading/trailing whitespace from column names."""
+def clean_dataframe(df):
+    """
+    Cleans raw flow dataframe headers and inf/nan values.
+    """
+    # Strip whitespace from column names
     df.columns = df.columns.str.strip()
+    
+    # Replace Infinity/NaN values with 0
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.fillna(0)
     return df
 
-def map_label_to_attack_stage(label):
+def map_label_to_mitre(label_str):
     """
-    Map raw dataset labels to MITRE ATT&CK Stages (0 to 4).
+    Maps raw attack strings to MITRE ATT&CK stages:
+    0: Benign
+    1: Reconnaissance / Initial Access
+    2: Execution / Persistence
+    3: Lateral Movement / DoS
+    4: Exfiltration / Impact
     """
-    label_str = str(label).upper()
-    if 'BENIGN' in label_str:
-        return 0  # Normal Traffic
-    elif 'PORTSCAN' in label_str or 'RECON' in label_str:
-        return 1  # Reconnaissance / Initial Access
-    elif 'INFILTRATION' in label_str or 'WEB' in label_str or 'BOT' in label_str:
-        return 2  # Execution / Persistence
-    elif 'DOS' in label_str or 'DDOS' in label_str or 'BRUTE FORCE' in label_str:
-        return 3  # Lateral Movement / Denial of Service
+    lbl = str(label_str).upper()
+    if 'BENIGN' in lbl:
+        return 0
+    elif any(k in lbl for k in ['PORTScan', 'RECON', 'PING']):
+        return 1
+    elif any(k in lbl for k in ['INFILTRATION', 'WEB ATTACK', 'XSS', 'SQL']):
+        return 2
+    elif any(k in lbl for k in ['DDOS', 'DOS', 'BOT']):
+        return 3
+    elif any(k in lbl for k in ['HEARTBLEED', 'PATATOR', 'SSH', 'FTP']):
+        return 4
     else:
-        return 4  # Exfiltration / Impact
+        return 0
 
-# =====================================================================
-# 1. Pipeline Dev Slice (20,000 - 50,000 rows, Stratified)
-# Purpose: Instant loading (<2 sec), testing PyG tensors & node mappings
-# =====================================================================
-def make_dev_slice(input_path: str = RAW_INPUT_PATH, output_path: str = "data/cleaned_samples/dev_sample_30k.csv", n_samples: int = 30000):
-    print("Generating Pipeline Dev Slice...")
-    # Read in chunks to keep RAM footprint negligible 
-    chunk_size = 50000
-    chunks = []
-    
-    for chunk in pd.read_csv(input_path, chunksize=chunk_size, low_memory=False):
-        chunk = clean_columns(chunk)
-        chunks.append(chunk)
-        if sum(len(c) for c in chunks) >= 150000:
-            break
-            
-    df_pool = pd.concat(chunks, ignore_index=True)
-    
-    # Stratified sample across all available attack and benign classes
-    dev_slice = (
-        df_pool.groupby("Label")
-        .apply(lambda x: x.sample(n=min(len(x), n_samples // df_pool["Label"].nunique()), random_state=42))
-        .reset_index(level=0)
-        .reset_index(drop=True)
-    )
-    
-    dev_slice.to_csv(output_path, index=False)
-    print(f"Saved Dev Slice ({len(dev_slice)} rows) -> {output_path}")
-
-# =====================================================================
-# 2. Single-Attack Benchmark Slice (100,000 - 300,000 rows, Temporal)
-# Purpose: Realistic continuous traffic sequence for GNN + Temporal baseline
-# =====================================================================
-def make_benchmark_slice(input_path: str, output_path: str = "data/cleaned_samples/benchmark_ddos_150k.csv", n_rows: int = 150000):
-    print("Generating Single-Attack Benchmark Slice...")
-    
-    # Read the top n continuous rows directly
-    df = pd.read_csv(input_path, nrows=n_rows, low_memory=False)
-    df = clean_columns(df)
-    
-    # If Timestamp column exists, ensure chronological order for temporal modeling
-    if "Timestamp" in df.columns:
-        df["Timestamp"] = pd.to_datetime(df["Timestamp"])
-        df = df.sort_values("Timestamp")
-        
-    df.to_csv(output_path, index=False)
-    print(f"Saved Benchmark Slice ({len(df)} rows) -> {output_path}")
-
-# =====================================================================
-# 3. Full Cleaned Dataset (Downcasted Memory Footprint)
-# =====================================================================
-def make_optimized_full_dataset(input_path: str, output_path: str = "data/cleaned_samples/full_optimized.csv"):
-    print("Optimizing Full Dataset (Downcasting float64/int64)...")
-    
-    first_chunk = True
-    for chunk in pd.read_csv(input_path, chunksize=100000, low_memory=False):
-        chunk = clean_columns(chunk)
-        
-        # Replace infinities and drop NaNs
-        chunk = chunk.replace([np.inf, -np.inf], np.nan).dropna()
-        
-        # Downcast 64-bit numbers to 32-bit to halve memory usage
-        for col in chunk.select_dtypes(include=["float64"]).columns:
-            chunk[col] = chunk[col].astype(np.float32)
-        for col in chunk.select_dtypes(include=["int64"]).columns:
-            chunk[col] = chunk[col].astype(np.int32)
-            
-        # Append chunk to output file
-        chunk.to_csv(output_path, mode="w" if first_chunk else "a", header=first_chunk, index=False)
-        first_chunk = False
-        
-    print(f"Saved Optimized Full Dataset -> {output_path}")
-
-
-# we have to create a parquet reader -> CSV converter for initial phase
-# later we will be using telemetry packets
-
-# ======================================================================
-# 
-#  ======================================================================
-def csv_to_graph_snapshots(csv_path, time_window_size=300):
+def make_master_dataset(raw_dir, output_csv_path, samples_per_file=20000):
     """
-    Converts a cleaned flow CSV into a sequence of PyTorch Geometric Data graph snapshots.
+    In-memory chunked reader for all raw CSV files in raw_dir.
+    Creates a stratified master dataset at output_csv_path.
     """
-    df = pd.read_csv(csv_path)
-    df = clean_columns(df)
-    
-    # Handle infinite or missing values
-    df = df.replace([np.inf, -np.inf], np.nan).dropna()
+    raw_files = glob.glob(os.path.join(raw_dir, "*.csv"))
+    if not raw_files:
+        raise FileNotFoundError(f"No raw CSV files found in {raw_dir}")
 
-    # Identify numerical feature columns
-    ignore_cols = ['Source IP', 'Destination IP', 'Timestamp', 'Label', 'Flow ID']
-    feature_cols = [c for c in df.columns if c not in ignore_cols and np.issubdtype(df[c].dtype, np.number)]
-    
-    # Normalize features
-    scaler = StandardScaler()
-    df[feature_cols] = scaler.fit_transform(df[feature_cols])
+    processed_dfs = []
+    print(f"[DataLoader] Ingesting {len(raw_files)} raw dataset files...")
 
-    # Determine Source & Destination Nodes
-    has_ips = 'Source IP' in df.columns and 'Destination IP' in df.columns
+    for fpath in raw_files:
+        fname = os.path.basename(fpath)
+        print(f"  └─ Processing: {fname}")
+        
+        # Read in chunks to prevent memory overload with encoding fallback
+        chunks = []
+        try:
+            reader = pd.read_csv(fpath, chunksize=50000, low_memory=False, encoding_errors='replace')
+            for chunk in reader:
+                chunk = clean_dataframe(chunk)
+                chunks.append(chunk)
+                if sum(len(c) for c in chunks) >= samples_per_file * 2:
+                    break
+        except Exception as e:
+            print(f"  ⚠️ Warning reading {fname}: {e}")
+            continue
+                
+        if chunks:
+            full_df = pd.concat(chunks, ignore_index=True)
+            n_samples = min(len(full_df), samples_per_file)
+            sample_df = full_df.sample(n=n_samples, random_state=42)
+            processed_dfs.append(sample_df)
+
+    if not processed_dfs:
+        raise RuntimeError("No CSV files could be parsed successfully!")
+
+    master_df = pd.concat(processed_dfs, ignore_index=True)
     
+    os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
+    master_df.to_csv(output_csv_path, index=False)
+    print(f"[DataLoader] Saved consolidated master dataset ({len(master_df)} rows) -> {output_csv_path}")
+    return master_df
+
+def csv_to_graph_snapshots(df, window_size=300):
+    """
+    Converts a dataframe into a sequence of PyG Data objects.
+    """
+    df = clean_dataframe(df)
+    
+    # Extract numerical telemetry columns
+    ignore_cols = ['Label', 'Source IP', 'Destination IP', 'Timestamp', 'Flow ID']
+    feature_cols = [c for c in df.columns if c not in ignore_cols and pd.api.types.is_numeric_dtype(df[c])]
+    
+    # Label Column identification
+    label_col = 'Label' if 'Label' in df.columns else df.columns[-1]
+    
+    num_windows = len(df) // window_size
     snapshots = []
-    num_windows = len(df) // time_window_size
-    
-    for i in range(num_windows):
-        window_df = df.iloc[i * time_window_size : (i + 1) * time_window_size]
-        
-        if has_ips:
-            unique_nodes = list(set(window_df['Source IP']).union(set(window_df['Destination IP'])))
-            node_map = {ip: idx for idx, ip in enumerate(unique_nodes)}
-            src_indices = [node_map[ip] for ip in window_df['Source IP']]
-            dst_indices = [node_map[ip] for ip in window_df['Destination IP']]
-        else:
-            # Fallback if raw IP columns aren't present in the slice
-            dst_port_col = 'Dst Port' if 'Dst Port' in window_df.columns else 'Destination Port'
-            unique_nodes = list(window_df[dst_port_col].unique())
-            node_map = {port: idx for idx, port in enumerate(unique_nodes)}
-            dst_indices = [node_map[port] for port in window_df[dst_port_col]]
-            src_indices = [(idx % len(unique_nodes)) for idx in range(len(window_df))]
 
-        edge_index = torch.tensor([src_indices, dst_indices], dtype=torch.long)
-        edge_attr = torch.tensor(window_df[feature_cols].values, dtype=torch.float)
+    for i in range(num_windows):
+        sub_df = df.iloc[i * window_size : (i + 1) * window_size]
         
-        num_nodes = len(node_map)
-        node_features = torch.zeros((num_nodes, len(feature_cols)), dtype=torch.float)
-        for idx, src_node in enumerate(src_indices):
-            node_features[src_node] += edge_attr[idx]
-        
-        window_labels = window_df['Label'].apply(map_label_to_attack_stage).values
-        graph_label = torch.tensor([max(window_labels)], dtype=torch.long)
-        
-        graph_snapshot = Data(
-            x=node_features,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            y=graph_label,
-            num_nodes=num_nodes
-        )
-        snapshots.append(graph_snapshot)
+        # Determine host/port nodes
+        if 'Destination Port' in sub_df.columns:
+            dst_ports = sub_df['Destination Port'].astype(int).values
+            unique_nodes, node_mapping = np.unique(dst_ports, return_inverse=True)
+            num_nodes = len(unique_nodes)
+            
+            # Construct directed edge index (sequential flow connections)
+            src_indices = np.arange(len(sub_df) - 1) % num_nodes
+            dst_indices = node_mapping[1:]
+            edge_index = torch.tensor(np.vstack([src_indices, dst_indices]), dtype=torch.long)
+        else:
+            num_nodes = 20
+            edge_index = torch.randint(0, num_nodes, (2, window_size), dtype=torch.long)
+
+        # Feature matrix (N, F)
+        raw_feats = sub_df[feature_cols].values
+        # Normalize features
+        mean = np.mean(raw_feats, axis=0)
+        std = np.std(raw_feats, axis=0) + 1e-6
+        norm_feats = (raw_feats - mean) / std
+
+        # Node feature aggregation
+        node_features = np.zeros((num_nodes, len(feature_cols)), dtype=np.float32)
+        for idx in range(min(len(sub_df), num_nodes)):
+            node_features[idx % num_nodes] = norm_feats[idx]
+
+        # Edge feature matrix
+        edge_attr = torch.tensor(norm_feats[:edge_index.shape[1]], dtype=torch.float)
+
+        # Determine target MITRE stage for the window
+        raw_labels = sub_df[label_col].values
+        mitre_stages = [map_label_to_mitre(lbl) for lbl in raw_labels]
+        # Assign highest severity stage observed in window
+        window_label = max(mitre_stages, key=lambda x: (x if x != 0 else -1))
+
+        x_tensor = torch.tensor(node_features, dtype=torch.float)
+        y_tensor = torch.tensor([window_label], dtype=torch.long)
+
+        graph_data = Data(x=x_tensor, edge_index=edge_index, edge_attr=edge_attr, y=y_tensor)
+        snapshots.append(graph_data)
 
     return snapshots
-
-
-if __name__ == "__main__":
-    make_dev_slice(RAW_INPUT_PATH)
-    #to create testing level file
-    # make_benchmark_slice(RAW_INPUT_PATH) 
-    # Uncomment only when you are ready to prepare the entire dataset
-    # make_optimized_full_dataset(RAW_INPUT_PATH)
-
