@@ -34,11 +34,21 @@ def train_model():
         sequences.append(seq)
         labels.append(target)
 
-    # Calculate Inverse Class Weights for Imbalance
+    # # Calculate Inverse Class Weights for Imbalance
+    # labels_tensor = torch.tensor(labels, dtype=torch.long)
+    # class_counts = torch.bincount(labels_tensor, minlength=5).float()
+    # print(f"[Train] MITRE Stage Distribution across windows: {class_counts.numpy().astype(int)}")
+
+    # Calculate Dampened Class Weights
     labels_tensor = torch.tensor(labels, dtype=torch.long)
     class_counts = torch.bincount(labels_tensor, minlength=5).float()
-    print(f"[Train] MITRE Stage Distribution across windows: {class_counts.numpy().astype(int)}")
+    print(f"[Train] MITRE Stage Distribution: {class_counts.numpy().astype(int)}")
 
+    # Dampen inverse weights with square root so normal traffic maintains strong baseline presence
+    class_weights = 1.0 / (torch.sqrt(class_counts) + 1e-5)
+    class_weights = class_weights / class_weights.sum()
+    print(f"[Train] Dampened Loss Weights: {class_weights.numpy().round(4)}")
+    
     # Add small epsilon to prevent division by zero
     total_samples = len(labels)
     class_weights = total_samples / (5.0 * (class_counts + 1e-5))
