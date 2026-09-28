@@ -137,13 +137,16 @@ def csv_to_graph_snapshots(df, window_size=300):
         # Determine target MITRE stage for the window
         raw_labels = sub_df[label_col].values
         mitre_stages = [map_label_to_mitre(lbl) for lbl in raw_labels]
-        # Assign highest severity stage observed in window
-        window_label = max(mitre_stages, key=lambda x: (x if x != 0 else -1))
+        
+        # Require majority/significant presence of attack flows (e.g., >10% of flows)
+        non_benign = [s for s in mitre_stages if s != 0]
+        if len(non_benign) > (len(sub_df) * 0.10):  # At least 10% attack flows
+            # Assign most frequent attack stage in the window
+            window_label = max(set(non_benign), key=non_benign.count)
+        else:
+            window_label = 0  # Pure Benign Baseline
 
         x_tensor = torch.tensor(node_features, dtype=torch.float)
         y_tensor = torch.tensor([window_label], dtype=torch.long)
-
-        graph_data = Data(x=x_tensor, edge_index=edge_index, edge_attr=edge_attr, y=y_tensor)
-        snapshots.append(graph_data)
 
     return snapshots
