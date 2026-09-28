@@ -1,96 +1,46 @@
 import os
-import sys
+import torch
+from pathlib import Path
+from data_loader import csv_to_graph_snapshots, make_dev_slice
 
-import pandas as pd
-import numpy as np
+# Configure directory paths
+BASE_DIR = Path(__file__).resolve().parent.parent
+CLEANED_DIR = BASE_DIR / "data" / "cleaned_samples"
+PROCESSED_DIR = BASE_DIR / "data" / "processed_graphs"
 
-RAW_INPUT_PATH = os.path.join("data", "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv") #for testing purpose onlyy..
-
-def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Strips leading/trailing whitespace from column names."""
-    df.columns = df.columns.str.strip()
-    return df
-
-# =====================================================================
-# 1. Pipeline Dev Slice (20,000 - 50,000 rows, Stratified)
-# Purpose: Instant loading (<2 sec), testing PyG tensors & node mappings
-# =====================================================================
-def make_dev_slice(input_path: str = RAW_INPUT_PATH, output_path: str = "data/samples/dev_sample_30k.csv", n_samples: int = 30000):
-    print("Generating Pipeline Dev Slice...")
-    # Read in chunks to keep RAM footprint negligible 
-    chunk_size = 50000
-    chunks = []
+def ensure_dev_slice_exists():
+    """Generates the dev_sample_30k.csv file if cleaned_samples is empty."""
+    CLEANED_DIR.mkdir(parents=True, exist_ok=True)
+    target_sample = CLEANED_DIR / "dev_sample_30k.csv"
     
-    for chunk in pd.read_csv(input_path, chunksize=chunk_size, low_memory=False):
-        chunk = clean_columns(chunk)
-        chunks.append(chunk)
-        if sum(len(c) for c in chunks) >= 150000:
-            break
-            
-    df_pool = pd.concat(chunks, ignore_index=True)
-    
-    # Stratified sample across all available attack and benign classes
-    dev_slice = (
-        df_pool.groupby("Label", group_keys=False)
-        .apply(lambda x: x.sample(n=min(len(x), n_samples // df_pool["Label"].nunique()), random_state=42))
-        .reset_index(drop=True)
-    )
-    
-    dev_slice.to_csv(output_path, index=False)
-    print(f"Saved Dev Slice ({len(dev_slice)} rows) -> {output_path}")
+    if not target_sample.exists():
+        print(f"No cleaned samples found in {CLEANED_DIR}. Triggering dev slice creation...")
+        make_dev_slice(output_path=str(target_sample))
 
-# =====================================================================
-# 2. Single-Attack Benchmark Slice (100,000 - 300,000 rows, Temporal)
-# Purpose: Realistic continuous traffic sequence for GNN + Temporal baseline
-# =====================================================================
-def make_benchmark_slice(input_path: str, output_path: str = "data/samples/benchmark_ddos_150k.csv", n_rows: int = 150000):
-    print("Generating Single-Attack Benchmark Slice...")
+def process_all_cleaned_samples(time_window_size=300):
+    """Parses all CSVs in data/cleaned_samples/ into PyG graph tensors."""
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     
-    # Read the top n continuous rows directly
-    df = pd.read_csv(input_path, nrows=n_rows, low_memory=False)
-    df = clean_columns(df)
-    
-    # If Timestamp column exists, ensure chronological order for temporal modeling
-    if "Timestamp" in df.columns:
-        df["Timestamp"] = pd.to_datetime(df["Timestamp"])
-        df = df.sort_values("Timestamp")
-        
-    df.to_csv(output_path, index=False)
-    print(f"Saved Benchmark Slice ({len(df)} rows) -> {output_path}")
+    # Check/generate initial dev slice
+    ensure_dev_slice_exists()
 
-# =====================================================================
-# 3. Full Cleaned Dataset (Downcasted Memory Footprint)
-# =====================================================================
-def make_optimized_full_dataset(input_path: str, output_path: str = "data/samples/full_optimized.csv"):
-    print("Optimizing Full Dataset (Downcasting float64/int64)...")
-    
-    first_chunk = True
-    for chunk in pd.read_csv(input_path, chunksize=100000, low_memory=False):
-        chunk = clean_columns(chunk)
-        
-        # Replace infinities and drop NaNs
-        chunk = chunk.replace([np.inf, -np.inf], np.nan).dropna()
-        
-        # Downcast 64-bit numbers to 32-bit to halve memory usage
-        for col in chunk.select_dtypes(include=["float64"]).columns:
-            chunk[col] = chunk[col].astype(np.float32)
-        for col in chunk.select_dtypes(include=["int64"]).columns:
-            chunk[col] = chunk[col].astype(np.int32)
-            
-        # Append chunk to output file
-        chunk.to_csv(output_path, mode="w" if first_chunk else "a", header=first_chunk, index=False)
-        first_chunk = False
-        
-    print(f"Saved Optimized Full Dataset -> {output_path}")
+    cleaned_files = list(CLEANED_DIR.glob("*.csv"))
 
+    if not cleaned_files:
+        print(f"Error: No CSV files found in {CLEANED_DIR} even after slice check.")
+        return
 
-# we have to create a parquet reader -> CSV converter for initial phase
-# later we will be using telemetry packets
+    print(f"\nFound {len(cleaned_files)} cleaned CSV file(s). Converting to graph snapshots...\n")
+
+    for csv_path in cleaned_files:
+        print(f"Processing: {csv_path.name}")
+        snapshots = csv_to_graph_snapshots(str(csv_path), time_window_size=time_window_size)
+
+        output_filename = f"{csv_path.stem}_graphs.pt"
+        output_path = PROCESSED_DIR / output_filename
+
+        torch.save(snapshots, output_path)
+        print(f"-> Saved {len(snapshots)} graph snapshots to {output_path}\n")
 
 if __name__ == "__main__":
-    make_dev_slice(RAW_INPUT_PATH)
-    #to create testing level file
-    # make_benchmark_slice(RAW_INPUT_PATH) 
-    # Uncomment only when you are ready to prepare the entire dataset
-    # make_optimized_full_dataset(RAW_INPUT_PATH)
-
+    process_all_cleaned_samples()
