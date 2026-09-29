@@ -1,0 +1,23 @@
+[project]
+name = "anafs"
+version = "0.1.0"
+description = "AI-based Network Attack Forecasting System"
+readme = "README.md"
+authors = [
+    { name = "zeta-yash", email = "somgupta070703@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "torch",
+    "torch-geometric",
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "networkx",
+    "matplotlib",
+    "streamlit",
+    "pyvis"
+]
+
+[tool.uv]
+package = false
