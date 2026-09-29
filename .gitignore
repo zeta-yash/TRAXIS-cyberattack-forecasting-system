@@ -14,3 +14,4 @@ notes.txt
 .venv/
 /data/original_samples
 /data/*.py
+.DS_Store

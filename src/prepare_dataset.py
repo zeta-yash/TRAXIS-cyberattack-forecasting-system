@@ -1,46 +1,22 @@
-import os
-import torch
 from pathlib import Path
-from data_loader import csv_to_graph_snapshots, make_dev_slice
+import torch
+from src.data_loader import clean_and_combine_raw_csvs, csv_to_graph_snapshots
 
-# Configure directory paths
 BASE_DIR = Path(__file__).resolve().parent.parent
-CLEANED_DIR = BASE_DIR / "data" / "cleaned_samples"
-PROCESSED_DIR = BASE_DIR / "data" / "processed_graphs"
+CLEANED_MASTER_PATH = BASE_DIR / "data" / "cleaned_samples" / "master_dataset.csv"
+PROCESSED_DATA_PATH = BASE_DIR / "data" / "processed_graphs" / "master_graphs.pt"
 
-def ensure_dev_slice_exists():
-    """Generates the dev_sample_30k.csv file if cleaned_samples is empty."""
-    CLEANED_DIR.mkdir(parents=True, exist_ok=True)
-    target_sample = CLEANED_DIR / "dev_sample_30k.csv"
+def build_master_dataset():
+    PROCESSED_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
     
-    if not target_sample.exists():
-        print(f"No cleaned samples found in {CLEANED_DIR}. Triggering dev slice creation...")
-        make_dev_slice(output_path=str(target_sample))
-
-def process_all_cleaned_samples(time_window_size=300):
-    """Parses all CSVs in data/cleaned_samples/ into PyG graph tensors."""
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    if not CLEANED_MASTER_PATH.exists():
+        clean_and_combine_raw_csvs()
+        
+    print("Converting master dataset into dynamic graph snapshots...")
+    snapshots = csv_to_graph_snapshots(CLEANED_MASTER_PATH, window_size=300)
     
-    # Check/generate initial dev slice
-    ensure_dev_slice_exists()
-
-    cleaned_files = list(CLEANED_DIR.glob("*.csv"))
-
-    if not cleaned_files:
-        print(f"Error: No CSV files found in {CLEANED_DIR} even after slice check.")
-        return
-
-    print(f"\nFound {len(cleaned_files)} cleaned CSV file(s). Converting to graph snapshots...\n")
-
-    for csv_path in cleaned_files:
-        print(f"Processing: {csv_path.name}")
-        snapshots = csv_to_graph_snapshots(str(csv_path), time_window_size=time_window_size)
-
-        output_filename = f"{csv_path.stem}_graphs.pt"
-        output_path = PROCESSED_DIR / output_filename
-
-        torch.save(snapshots, output_path)
-        print(f"-> Saved {len(snapshots)} graph snapshots to {output_path}\n")
+    torch.save(snapshots, PROCESSED_DATA_PATH)
+    print(f"Master dataset successfully processed! Saved {len(snapshots)} graph snapshots to {PROCESSED_DATA_PATH}")
 
 if __name__ == "__main__":
-    process_all_cleaned_samples()
+    build_master_dataset()
