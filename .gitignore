@@ -1,18 +1,13 @@
-# Vitual environments & uv cache
+# Virtual environments & cache
 .venv/
 uv.lock
-
-# Python bytecode
 __pycache__/
 *.py[cod]
-*$py.class
 
-#mynotes
-notes.txt
-/datadata/
-*.csv
-.venv/
-/data/original_samples
-/data/*.py
+# Ignore massive raw datasets (since processed graphs & weights are pre-built)
+data/cleaned_samples/
+data/original_samples/*.csv
+
+# OS files
 .DS_Store
-/data/processed_graphs/*.pt
+notes.txt
